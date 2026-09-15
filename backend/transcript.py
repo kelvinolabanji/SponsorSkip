@@ -58,6 +58,64 @@ def parse_vtt(vtt_file: Path) -> list[dict]:
 
     return entries
 
+def clean_transcript(entries: list[dict]) -> list[dict]:
+    cleaned = []
+
+    for entry in entries:
+        text = entry["text"].strip()
+
+        if not text:
+            continue
+
+        # Exact duplicate
+        if cleaned and text.lower() == cleaned[-1]["text"].lower():
+            continue
+
+        # Check whether this caption is mostly already present
+        # in the previous caption.
+        if cleaned:
+            previous = cleaned[-1]["text"]
+
+            previous_words = previous.lower().split()
+            current_words = text.lower().split()
+
+            if len(current_words) >= 3:
+                max_overlap = min(len(previous_words), len(current_words))
+
+                for overlap_size in range(max_overlap, 2, -1):
+                    previous_end = previous_words[-overlap_size:]
+                    current_start = current_words[:overlap_size]
+
+                    if previous_end == current_start:
+                        # Remove the repeated beginning from this caption
+                        text = " ".join(
+                            current_words[overlap_size:]
+                        )
+
+                        if not text:
+                            break
+
+                        # Preserve the original capitalization where possible
+                        original_words = entry["text"].strip().split()
+
+                        if len(original_words) > overlap_size:
+                            text = " ".join(
+                                original_words[overlap_size:]
+                            )
+
+                        break
+
+        if not text:
+            continue
+
+        cleaned.append({
+            "text": text,
+            "start": entry["start"],
+            "duration": entry["duration"]
+        })
+
+    return cleaned
+
 
 def vtt_time_to_seconds(timestamp: str) -> float:
     """Convert a VTT timestamp to seconds."""
@@ -125,7 +183,8 @@ def get_transcript(video_id: str) -> list[dict]:
                     "No English transcript found for this video."
                 )
 
-            return parse_vtt(vtt_file)
+            transcript = parse_vtt(vtt_file)
+            return clean_transcript(transcript)
 
     except FileNotFoundError:
         raise TranscriptUnavailable(

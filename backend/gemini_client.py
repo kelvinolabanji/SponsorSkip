@@ -47,23 +47,58 @@ class SponsorResult(BaseModel):
 
 
 def detect_sponsor_segments(transcript_text: str) -> list[dict]:
+    chunks = split_transcript(transcript_text)
 
-    response = client.interactions.create(
-        model="gemini-3.6-flash",
-        system_instruction=SYSTEM_PROMPT,
-        input=transcript_text,
-        response_format={
-            "type": "text",
-            "mime_type": "application/json",
-            "schema": SponsorResult.model_json_schema()
-        }
-    )
+    all_segments = []
 
-    result = SponsorResult.model_validate_json(
-        response.output_text
-    )
+    for chunk in chunks:
+        response = client.interactions.create(
+            model="gemini-3.6-flash",
+            system_instruction=SYSTEM_PROMPT,
+            input=chunk,
+            response_format={
+                "type": "text",
+                "mime_type": "application/json",
+                "schema": SponsorResult.model_json_schema()
+            }
+        )
 
-    return [
-        segment.model_dump()
-        for segment in result.segments
-    ]
+        result = SponsorResult.model_validate_json(
+            response.output_text
+        )
+
+        all_segments.extend(
+            segment.model_dump()
+            for segment in result.segments
+        )
+
+    return all_segments
+
+def split_transcript(
+    transcript_text: str,
+    max_chars: int = 12000
+) -> list[str]:
+
+    lines = transcript_text.splitlines()
+
+    chunks = []
+    current_chunk = []
+    current_length = 0
+
+    for line in lines:
+
+        line_length = len(line)
+
+        if current_chunk and current_length + line_length > max_chars:
+            chunks.append("\n".join(current_chunk))
+
+            current_chunk = []
+            current_length = 0
+
+        current_chunk.append(line)
+        current_length += line_length
+
+    if current_chunk:
+        chunks.append("\n".join(current_chunk))
+
+    return chunks
