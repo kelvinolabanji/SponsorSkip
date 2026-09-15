@@ -8,7 +8,7 @@ from sqlalchemy import select
 
 from db import init_db, get_session, VideoSegments
 from transcript import get_transcript, format_for_prompt, TranscriptUnavailable
-from groq_client import detect_sponsor_segments
+from gemini_client import detect_sponsor_segments
 
 
 @asynccontextmanager
