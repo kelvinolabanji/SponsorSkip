@@ -27,14 +27,12 @@ Do NOT flag:
 - intros
 - outros unless they contain promotional content
 
-Return only the sponsored segments.
-
-For each segment provide:
+For each sponsored segment provide:
 - start: timestamp in seconds
 - end: timestamp in seconds
 - label: "sponsor"
 
-If there are no sponsored segments, return an empty list.
+If there are no sponsored segments, return an empty segments array.
 """
 
 
@@ -52,16 +50,8 @@ def detect_sponsor_segments(transcript_text: str) -> list[dict]:
 
     response = client.interactions.create(
         model="gemini-3.6-flash",
-        input=[
-            {
-                "role": "system",
-                "content": SYSTEM_PROMPT
-            },
-            {
-                "role": "user",
-                "content": transcript_text
-            }
-        ],
+        system_instruction=SYSTEM_PROMPT,
+        input=transcript_text,
         response_format={
             "type": "text",
             "mime_type": "application/json",
