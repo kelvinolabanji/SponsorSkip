@@ -18,7 +18,7 @@ If there are no sponsor segments, respond with [].
 
 def detect_sponsor_segments(transcript_text: str) -> list[dict]:
     response = client.chat.completions.create(
-        model="llama-3.3-70b-versatile",
+        model="openai/gpt-oss-120b",
         messages=[
             {"role": "system", "content": SYSTEM_PROMPT},
             {"role": "user", "content": transcript_text},

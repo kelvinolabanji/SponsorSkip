@@ -1,12 +1,14 @@
+from dotenv import load_dotenv
+load_dotenv()
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
-from app.db import init_db, get_session, VideoSegments
-from app.transcript import get_transcript, format_for_prompt, TranscriptUnavailable
-from app.groq_client import detect_sponsor_segments
+from db import init_db, get_session, VideoSegments
+from transcript import get_transcript, format_for_prompt, TranscriptUnavailable
+from groq_client import detect_sponsor_segments
 
 
 @asynccontextmanager
