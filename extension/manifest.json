@@ -1,0 +1,24 @@
+{
+  "manifest_version": 3,
+  "name": "SponsorSkip",
+  "version": "1.0.0",
+  "description": "Automatically skips sponsored segments in YouTube videos.",
+  "permissions": [],
+  "host_permissions": [
+    "http://localhost:8001/*",
+    "http://127.0.0.1:8001/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://www.youtube.com/*"
+      ],
+      "js": [
+        "content.js"
+      ]
+    }
+  ]
+}
