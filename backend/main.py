@@ -56,10 +56,10 @@ async def get_segments(
     try:
         transcript = get_transcript(video_id)
 
-    except TranscriptUnavailable:
+    except TranscriptUnavailable as e:
         raise HTTPException(
             status_code=422,
-            detail="No transcript available for this video"
+            detail=str(e)
         )
 
     prompt_text = format_for_prompt(transcript)
