@@ -4,9 +4,8 @@ load_dotenv()
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, Depends
+from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
-from google.genai import errors
 
 from db import init_db, get_session, VideoSegments
 from transcript import get_transcript, format_for_prompt, TranscriptUnavailable
@@ -20,6 +19,24 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(lifespan=lifespan)
+
+
+# Allow the Chrome extension to communicate with the API
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+# Simple endpoint for testing the extension → API connection
+@app.get("/test")
+async def test():
+    return {
+        "message": "SponsorSkip API is reachable"
+    }
 
 
 @app.get("/segments/{video_id}")
@@ -50,11 +67,16 @@ async def get_segments(
     try:
         segments = detect_sponsor_segments(prompt_text)
 
-    except errors.RateLimitError:
-        raise HTTPException(
-            status_code=429,
-            detail="Gemini API quota exceeded. Please try again later."
-        )
+    except Exception as error:
+        error_message = str(error)
+
+        if "quota" in error_message.lower() or "429" in error_message:
+            raise HTTPException(
+                status_code=429,
+                detail="Gemini API quota exceeded. Please try again later."
+            )
+
+        raise
 
     entry = VideoSegments(
         video_id=video_id,
