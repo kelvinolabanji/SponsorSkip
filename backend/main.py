@@ -18,35 +18,61 @@ from transcript import (
     TranscriptUnavailable
 )
 
-from gemini_client import detect_sponsor_segments
+from sponsor_detector import detect_sponsor_segments
 
+
+# --------------------------------------------------
+# Application lifespan
+# --------------------------------------------------
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+
     await init_db()
+
     yield
 
 
-app = FastAPI(lifespan=lifespan)
+app = FastAPI(
+    lifespan=lifespan
+)
 
 
-# Allow the Chrome extension to communicate with the API
+# --------------------------------------------------
+# CORS
+# --------------------------------------------------
+
+# Allow the Chrome extension to communicate
+# with the API.
+
 app.add_middleware(
     CORSMiddleware,
+
     allow_origins=["*"],
+
     allow_credentials=True,
+
     allow_methods=["*"],
+
     allow_headers=["*"],
 )
 
 
-# Simple endpoint for testing the extension → API connection
+# --------------------------------------------------
+# Test endpoint
+# --------------------------------------------------
+
 @app.get("/test")
 async def test():
+
     return {
         "message": "SponsorSkip API is reachable"
     }
 
+
+# --------------------------------------------------
+# Sponsor segments endpoint
+# --------------------------------------------------
 
 @app.get("/segments/{video_id}")
 async def get_segments(
@@ -66,11 +92,21 @@ async def get_segments(
     if cached:
 
         print()
+
         print("=" * 60)
         print("USING CACHED SPONSOR SEGMENTS")
         print("=" * 60)
-        print(f"Video ID: {video_id}")
+
+        print(
+            f"Video ID: {video_id}"
+        )
+
+        print(
+            f"Segments: {cached.segments}"
+        )
+
         print("=" * 60)
+
         print()
 
         return {
@@ -86,27 +122,35 @@ async def get_segments(
 
     try:
 
-        transcript = get_transcript(video_id)
+        transcript = get_transcript(
+            video_id
+        )
 
-        # Convert transcript into the exact text that
-        # will be sent to Gemini.
+        # Convert transcript into the timestamped
+        # text that will be sent to Groq.
+
         transcript_text = format_for_prompt(
             transcript
         )
+
 
         # --------------------------------------------------
         # Transcript debug information
         # --------------------------------------------------
 
         print()
+
         print("=" * 60)
         print("TRANSCRIPT RETRIEVED SUCCESSFULLY")
         print("=" * 60)
 
-        print(f"Video ID: {video_id}")
+        print(
+            f"Video ID: {video_id}"
+        )
 
         print(
-            f"Transcript entries: {len(transcript)}"
+            f"Transcript entries: "
+            f"{len(transcript)}"
         )
 
         print(
@@ -117,6 +161,7 @@ async def get_segments(
         print()
 
         print("FIRST 500 CHARACTERS:")
+
         print("-" * 60)
 
         print(
@@ -126,6 +171,7 @@ async def get_segments(
         print("-" * 60)
 
         print("=" * 60)
+
         print()
 
     except TranscriptUnavailable as e:
@@ -137,8 +183,14 @@ async def get_segments(
 
 
     # --------------------------------------------------
-    # Send transcript to Gemini
+    # Send transcript to Groq
     # --------------------------------------------------
+
+    print()
+
+    print("#" * 60)
+    print("STARTING SPONSOR DETECTION")
+    print("#" * 60)
 
     try:
 
@@ -148,24 +200,26 @@ async def get_segments(
 
     except Exception as error:
 
-        error_message = str(error)
+        print()
 
-        # Gemini quota / rate limit
-        if (
-            "quota" in error_message.lower()
-            or "429" in error_message
-        ):
+        print("=" * 60)
+        print("SPONSOR DETECTION FAILED")
+        print("=" * 60)
 
-            raise HTTPException(
-                status_code=429,
-                detail=(
-                    "Gemini API quota exceeded. "
-                    "Please try again later."
-                )
+        print(
+            str(error)
+        )
+
+        print("=" * 60)
+
+        print()
+
+        raise HTTPException(
+            status_code=502,
+            detail=(
+                "Sponsor detection service failed."
             )
-
-        # Let other Gemini errors propagate
-        raise
+        )
 
 
     # --------------------------------------------------
