@@ -44,10 +44,18 @@ def parse_vtt(vtt_file: Path) -> list[dict]:
         subtitle_text = " ".join(subtitle_lines)
 
         # Remove HTML tags like <c>...</c>
-        subtitle_text = re.sub(r"<[^>]+>", "", subtitle_text)
+        subtitle_text = re.sub(
+            r"<[^>]+>",
+            "",
+            subtitle_text
+        )
 
         # Remove duplicate whitespace
-        subtitle_text = re.sub(r"\s+", " ", subtitle_text).strip()
+        subtitle_text = re.sub(
+            r"\s+",
+            " ",
+            subtitle_text
+        ).strip()
 
         if subtitle_text:
             entries.append({
@@ -58,36 +66,65 @@ def parse_vtt(vtt_file: Path) -> list[dict]:
 
     return entries
 
+
 def clean_transcript(entries: list[dict]) -> list[dict]:
+    """
+    Remove duplicated/overlapping caption text.
+
+    YouTube auto-generated captions often repeat portions
+    of the previous caption.
+    """
+
     cleaned = []
 
     for entry in entries:
+
         text = entry["text"].strip()
 
         if not text:
             continue
 
         # Exact duplicate
-        if cleaned and text.lower() == cleaned[-1]["text"].lower():
+        if (
+            cleaned
+            and text.lower() == cleaned[-1]["text"].lower()
+        ):
             continue
 
-        # Check whether this caption is mostly already present
-        # in the previous caption.
+        # Check whether this caption is mostly already
+        # present in the previous caption.
         if cleaned:
+
             previous = cleaned[-1]["text"]
 
             previous_words = previous.lower().split()
             current_words = text.lower().split()
 
             if len(current_words) >= 3:
-                max_overlap = min(len(previous_words), len(current_words))
 
-                for overlap_size in range(max_overlap, 2, -1):
-                    previous_end = previous_words[-overlap_size:]
-                    current_start = current_words[:overlap_size]
+                max_overlap = min(
+                    len(previous_words),
+                    len(current_words)
+                )
+
+                for overlap_size in range(
+                    max_overlap,
+                    2,
+                    -1
+                ):
+
+                    previous_end = (
+                        previous_words[-overlap_size:]
+                    )
+
+                    current_start = (
+                        current_words[:overlap_size]
+                    )
 
                     if previous_end == current_start:
-                        # Remove the repeated beginning from this caption
+
+                        # Remove repeated beginning
+                        # from this caption.
                         text = " ".join(
                             current_words[overlap_size:]
                         )
@@ -95,8 +132,13 @@ def clean_transcript(entries: list[dict]) -> list[dict]:
                         if not text:
                             break
 
-                        # Preserve the original capitalization where possible
-                        original_words = entry["text"].strip().split()
+                        # Preserve original capitalization
+                        # where possible.
+                        original_words = (
+                            entry["text"]
+                            .strip()
+                            .split()
+                        )
 
                         if len(original_words) > overlap_size:
                             text = " ".join(
@@ -121,11 +163,14 @@ def vtt_time_to_seconds(timestamp: str) -> float:
     """Convert a VTT timestamp to seconds."""
 
     timestamp = timestamp.strip().split()[0]
+
+    # VTT can use commas for milliseconds
     timestamp = timestamp.replace(",", ".")
 
     parts = timestamp.split(":")
 
     if len(parts) == 3:
+
         hours, minutes, seconds = parts
 
         return (
@@ -135,6 +180,7 @@ def vtt_time_to_seconds(timestamp: str) -> float:
         )
 
     elif len(parts) == 2:
+
         minutes, seconds = parts
 
         return (
@@ -143,12 +189,16 @@ def vtt_time_to_seconds(timestamp: str) -> float:
         )
 
     else:
-        raise ValueError(f"Invalid VTT timestamp: {timestamp}")
+        raise ValueError(
+            f"Invalid VTT timestamp: {timestamp}"
+        )
+
 
 def get_transcript(video_id: str) -> list[dict]:
-    """Download and return YouTube subtitles."""
+    """Download and return YouTube English subtitles."""
 
     try:
+
         with tempfile.TemporaryDirectory() as temp_dir:
 
             output_template = str(
@@ -157,11 +207,20 @@ def get_transcript(video_id: str) -> list[dict]:
 
             command = [
                 "yt-dlp",
+
                 "--write-auto-subs",
-                "--sub-langs", "en",
-                "--sub-format", "vtt",
+
+                "--sub-langs",
+                "en",
+
+                "--sub-format",
+                "vtt",
+
                 "--skip-download",
-                "--output", output_template,
+
+                "--output",
+                output_template,
+
                 f"https://www.youtube.com/watch?v={video_id}"
             ]
 
@@ -171,29 +230,54 @@ def get_transcript(video_id: str) -> list[dict]:
                 text=True
             )
 
+            # yt-dlp failed
             if result.returncode != 0:
+
                 raise TranscriptUnavailable(
-                    result.stderr
+                    result.stderr.strip()
                 )
 
-            vtt_file = Path(temp_dir) / f"{video_id}.en.vtt"
+            # Find the English VTT file that yt-dlp
+            # actually created.
+            vtt_files = list(
+                Path(temp_dir).glob("*.en.vtt")
+            )
 
-            if not vtt_file.exists():
+            if not vtt_files:
+
                 raise TranscriptUnavailable(
-                    "No English transcript found for this video."
+                    "YouTube subtitles were requested "
+                    "successfully, but no English VTT "
+                    "file was created."
                 )
 
+            # Use the downloaded English subtitle file.
+            vtt_file = vtt_files[0]
+
+            # Parse VTT
             transcript = parse_vtt(vtt_file)
-            return clean_transcript(transcript)
+
+            # Remove overlapping/duplicate captions
+            transcript = clean_transcript(transcript)
+
+            if not transcript:
+
+                raise TranscriptUnavailable(
+                    "The English transcript was downloaded, "
+                    "but it contained no readable captions."
+                )
+
+            return transcript
 
     except FileNotFoundError:
+
         raise TranscriptUnavailable(
             "yt-dlp is not installed or cannot be found."
         )
 
 
 def format_for_prompt(transcript: list[dict]) -> str:
-    """Compact timestamped text block for the LLM prompt."""
+    """Convert transcript into timestamped text for Gemini."""
 
     lines = []
 
@@ -201,7 +285,10 @@ def format_for_prompt(transcript: list[dict]) -> str:
 
         start = entry["start"]
 
-        mm, ss = divmod(int(start), 60)
+        mm, ss = divmod(
+            int(start),
+            60
+        )
 
         lines.append(
             f"[{mm:02d}:{ss:02d}] {entry['text']}"
