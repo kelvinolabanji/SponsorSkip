@@ -1,150 +1,582 @@
 console.log("SponsorSkip loaded");
 
+
 let currentVideoId = null;
+
 let sponsorSegments = [];
+
 let skippedSegments = new Set();
+
 let videoElement = null;
+
 let timeUpdateHandler = null;
+
 let popupElement = null;
+
 let popupTimeout = null;
 
+let isSkipping = false;
+
+
+/*
+ * How early we jump before the detected
+ * sponsor start.
+ *
+ * This prevents the viewer from hearing
+ * the first few words of the sponsor.
+ */
+const PRE_SKIP_SECONDS = 1.5;
+
+
+/*
+ * Get the current YouTube video ID.
+ */
 function getVideoId() {
-    const url = new URL(window.location.href);
+
+    const url =
+        new URL(window.location.href);
+
     return url.searchParams.get("v");
 }
 
-// Handles whichever field names gemini_client.py actually returns
+
+/*
+ * Normalize whatever field names
+ * the backend happens to return.
+ */
 function normalizeSegments(rawSegments) {
-    if (!Array.isArray(rawSegments)) return [];
+
+    if (!Array.isArray(rawSegments)) {
+        return [];
+    }
+
     return rawSegments
         .map(seg => {
-            const start = seg.start ?? seg.start_time ?? seg.startTime ?? seg.begin;
-            const end = seg.end ?? seg.end_time ?? seg.endTime ?? seg.finish;
-            return { start: Number(start), end: Number(end) };
+
+            const start =
+                seg.start ??
+                seg.start_time ??
+                seg.startTime ??
+                seg.begin;
+
+            const end =
+                seg.end ??
+                seg.end_time ??
+                seg.endTime ??
+                seg.finish;
+
+            return {
+                start: Number(start),
+                end: Number(end)
+            };
         })
-        .filter(seg => Number.isFinite(seg.start) && Number.isFinite(seg.end) && seg.end > seg.start);
+        .filter(seg =>
+            Number.isFinite(seg.start) &&
+            Number.isFinite(seg.end) &&
+            seg.end > seg.start
+        )
+        .sort((a, b) =>
+            a.start - b.start
+        );
 }
 
+
+/*
+ * Request sponsor segments from
+ * the backend.
+ */
 function fetchSponsorSegments(videoId) {
-    console.log("Requesting sponsor segments for:", videoId);
+
+    console.log(
+        "Requesting sponsor segments for:",
+        videoId
+    );
 
     chrome.runtime.sendMessage(
-        { type: "GET_SEGMENTS", videoId: videoId },
+        {
+            type: "GET_SEGMENTS",
+            videoId: videoId
+        },
         (response) => {
+
             if (chrome.runtime.lastError) {
-                console.error("SponsorSkip message error:", chrome.runtime.lastError.message);
+
+                console.error(
+                    "SponsorSkip message error:",
+                    chrome.runtime.lastError.message
+                );
+
                 return;
             }
 
-            console.log("Response from background:", response);
+            console.log(
+                "Response from background:",
+                response
+            );
 
-            if (response.success) {
-                console.log("Raw segments:", response.data.segments);
-                sponsorSegments = normalizeSegments(response.data.segments);
+            if (
+                response &&
+                response.success
+            ) {
+
+                console.log(
+                    "Raw segments:",
+                    response.data.segments
+                );
+
+                sponsorSegments =
+                    normalizeSegments(
+                        response.data.segments
+                    );
+
                 skippedSegments.clear();
-                console.log("Normalized segments:", sponsorSegments);
+
+                console.log(
+                    "Normalized segments:",
+                    sponsorSegments
+                );
+
             } else {
-                console.error("Failed to get segments:", response.error);
+
+                console.error(
+                    "Failed to get segments:",
+                    response
+                        ? response.error
+                        : "No response"
+                );
+
                 sponsorSegments = [];
             }
         }
     );
 }
 
+
+/*
+ * Create the skip notification.
+ */
 function ensurePopupElement() {
-    if (popupElement) return popupElement;
 
-    const player = document.querySelector("#movie_player") || document.body;
+    if (popupElement) {
+        return popupElement;
+    }
 
-    popupElement = document.createElement("div");
-    popupElement.textContent = "Sponsor skipped";
-    popupElement.style.position = "absolute";
-    popupElement.style.bottom = "70px";
-    popupElement.style.left = "50%";
-    popupElement.style.transform = "translateX(-50%)";
-    popupElement.style.background = "rgba(28, 28, 28, 0.9)";
-    popupElement.style.color = "#fff";
-    popupElement.style.padding = "8px 16px";
-    popupElement.style.borderRadius = "18px";
-    popupElement.style.fontFamily = "Roboto, Arial, sans-serif";
-    popupElement.style.fontSize = "14px";
-    popupElement.style.fontWeight = "500";
-    popupElement.style.zIndex = "9999";
-    popupElement.style.pointerEvents = "none";
-    popupElement.style.opacity = "0";
-    popupElement.style.transition = "opacity 0.2s ease";
+    const player =
+        document.querySelector("#movie_player") ||
+        document.body;
 
-    player.style.position = player.style.position || "relative";
-    player.appendChild(popupElement);
+    popupElement =
+        document.createElement("div");
+
+    popupElement.innerHTML = `
+        <div style="
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        ">
+            <span style="
+                font-size: 20px;
+                line-height: 1;
+            ">
+                ⏭
+            </span>
+
+            <span>
+                Sponsored segment skipped
+            </span>
+        </div>
+    `;
+
+    popupElement.style.position =
+        "absolute";
+
+    popupElement.style.bottom =
+        "80px";
+
+    popupElement.style.left =
+        "50%";
+
+    popupElement.style.transform =
+        "translateX(-50%) translateY(5px)";
+
+    popupElement.style.background =
+        "rgba(20, 20, 20, 0.95)";
+
+    popupElement.style.color =
+        "#fff";
+
+    popupElement.style.padding =
+        "12px 18px";
+
+    popupElement.style.borderRadius =
+        "8px";
+
+    popupElement.style.fontFamily =
+        "Roboto, Arial, sans-serif";
+
+    popupElement.style.fontSize =
+        "14px";
+
+    popupElement.style.fontWeight =
+        "500";
+
+    popupElement.style.zIndex =
+        "9999";
+
+    popupElement.style.pointerEvents =
+        "none";
+
+    popupElement.style.opacity =
+        "0";
+
+    popupElement.style.transition =
+        "opacity 0.25s ease, transform 0.25s ease";
+
+    player.style.position =
+        player.style.position || "relative";
+
+    player.appendChild(
+        popupElement
+    );
 
     return popupElement;
 }
 
+
+/*
+ * Show the notification.
+ */
 function showSkippedPopup() {
-    const popup = ensurePopupElement();
 
-    popup.style.opacity = "1";
+    const popup =
+        ensurePopupElement();
 
-    if (popupTimeout) clearTimeout(popupTimeout);
-    popupTimeout = setTimeout(() => {
-        popup.style.opacity = "0";
-    }, 1500);
+    popup.style.opacity =
+        "1";
+
+    popup.style.transform =
+        "translateX(-50%) translateY(0)";
+
+    if (popupTimeout) {
+
+        clearTimeout(
+            popupTimeout
+        );
+    }
+
+    popupTimeout =
+        setTimeout(() => {
+
+            popup.style.opacity =
+                "0";
+
+            popup.style.transform =
+                "translateX(-50%) translateY(5px)";
+
+        }, 2000);
 }
 
-function attachToVideo() {
-    const video = document.querySelector("video");
 
-    if (!video) {
-        setTimeout(attachToVideo, 500);
+/*
+ * Perform the actual sponsor skip.
+ *
+ * IMPORTANT:
+ *
+ * There is deliberately NO fade,
+ * NO blur and NO overlay.
+ *
+ * The goal is for the viewer to
+ * experience:
+ *
+ * normal content
+ * ->
+ * normal content
+ *
+ * as if the sponsor never existed.
+ */
+function skipSponsor(time) {
+
+    if (!videoElement) {
         return;
     }
 
-    if (video === videoElement) return;
+    console.log(
+        `SponsorSkip: jumping to ${time.toFixed(2)}s`
+    );
 
-    if (videoElement && timeUpdateHandler) {
-        videoElement.removeEventListener("timeupdate", timeUpdateHandler);
+    videoElement.currentTime =
+        time;
+}
+
+
+/*
+ * Attach to YouTube's video element.
+ */
+function attachToVideo() {
+
+    const video =
+        document.querySelector("video");
+
+
+    /*
+     * Video element hasn't appeared yet.
+     */
+    if (!video) {
+
+        setTimeout(
+            attachToVideo,
+            500
+        );
+
+        return;
     }
 
-    videoElement = video;
 
+    /*
+     * Already attached.
+     */
+    if (video === videoElement) {
+        return;
+    }
+
+
+    /*
+     * Remove listener from previous
+     * video element.
+     */
+    if (
+        videoElement &&
+        timeUpdateHandler
+    ) {
+
+        videoElement.removeEventListener(
+            "timeupdate",
+            timeUpdateHandler
+        );
+    }
+
+
+    videoElement =
+        video;
+
+
+    /*
+     * Check the playback position.
+     */
     timeUpdateHandler = () => {
-        const t = videoElement.currentTime;
 
-        for (const segment of sponsorSegments) {
-            const key = `${segment.start}-${segment.end}`;
+        if (!videoElement) {
+            return;
+        }
 
-            if (t >= segment.start && t < segment.end && !skippedSegments.has(key)) {
-                console.log(`SponsorSkip: skipping ${segment.start}s -> ${segment.end}s`);
-                videoElement.currentTime = segment.end;
-                skippedSegments.add(key);
+        if (isSkipping) {
+            return;
+        }
+
+
+        const currentTime =
+            videoElement.currentTime;
+
+
+        for (
+            const segment of sponsorSegments
+        ) {
+
+            const key =
+                `${segment.start}-${segment.end}`;
+
+
+            /*
+             * Calculate when we want to
+             * perform the skip.
+             *
+             * Example:
+             *
+             * Sponsor starts: 320s
+             * Pre-skip:       1.5s
+             *
+             * Actual jump:    318.5s
+             */
+            const triggerTime =
+                Math.max(
+                    0,
+                    segment.start -
+                    PRE_SKIP_SECONDS
+                );
+
+
+            /*
+             * Once playback reaches the
+             * pre-skip point, jump directly
+             * to the end of the sponsor.
+             */
+            if (
+                currentTime >= triggerTime &&
+                currentTime < segment.end &&
+                !skippedSegments.has(key)
+            ) {
+
+                console.log(
+                    `SponsorSkip: ` +
+                    `pre-skipping sponsor ` +
+                    `${segment.start.toFixed(2)}s -> ` +
+                    `${segment.end.toFixed(2)}s`
+                );
+
+                console.log(
+                    `SponsorSkip: ` +
+                    `triggering at ` +
+                    `${triggerTime.toFixed(2)}s`
+                );
+
+
+                /*
+                 * Mark immediately so multiple
+                 * timeupdate events cannot fire
+                 * this segment repeatedly.
+                 */
+                skippedSegments.add(
+                    key
+                );
+
+
+                isSkipping = true;
+
+
+                /*
+                 * Jump directly to the
+                 * end of the advertisement.
+                 */
+                skipSponsor(
+                    segment.end
+                );
+
+
+                /*
+                 * Reset on the next frame.
+                 */
+                requestAnimationFrame(() => {
+
+                    isSkipping = false;
+
+                });
+
+
+                /*
+                 * Show notification.
+                 */
                 showSkippedPopup();
+
+
+                break;
             }
         }
     };
 
-    videoElement.addEventListener("timeupdate", timeUpdateHandler);
-    console.log("SponsorSkip attached to video element");
+
+    videoElement.addEventListener(
+        "timeupdate",
+        timeUpdateHandler
+    );
+
+
+    console.log(
+        "SponsorSkip attached to video element"
+    );
 }
 
+
+/*
+ * Handle YouTube video navigation.
+ */
 function handleVideoChange() {
-    const videoId = getVideoId();
 
-    if (!videoId || videoId === currentVideoId) return;
+    const videoId =
+        getVideoId();
 
-    currentVideoId = videoId;
+
+    if (
+        !videoId ||
+        videoId === currentVideoId
+    ) {
+        return;
+    }
+
+
+    console.log(
+        "SponsorSkip: new video:",
+        videoId
+    );
+
+
+    currentVideoId =
+        videoId;
+
+
+    /*
+     * Clear previous video's data.
+     */
     sponsorSegments = [];
+
     skippedSegments.clear();
 
-    fetchSponsorSegments(videoId);
+    isSkipping = false;
+
+
+    /*
+     * Fetch the new video's
+     * sponsor segments.
+     */
+    fetchSponsorSegments(
+        videoId
+    );
+
+
+    /*
+     * Attach to the video.
+     */
     attachToVideo();
 }
 
-// YouTube is an SPA — this fires on in-app navigation between videos
-document.addEventListener("yt-navigate-finish", handleVideoChange);
 
-// YouTube sometimes replaces the <video> element; catch that too
-const videoObserver = new MutationObserver(() => attachToVideo());
-videoObserver.observe(document.body, { childList: true, subtree: true });
+/*
+ * YouTube is an SPA.
+ *
+ * Detect navigation without a
+ * full page reload.
+ */
+document.addEventListener(
+    "yt-navigate-finish",
+    handleVideoChange
+);
 
-// Initial load
+
+/*
+ * YouTube can replace the video
+ * element dynamically.
+ *
+ * Watch for that.
+ */
+const videoObserver =
+    new MutationObserver(
+        () => {
+
+            attachToVideo();
+
+        }
+    );
+
+
+videoObserver.observe(
+    document.body,
+    {
+        childList: true,
+        subtree: true
+    }
+);
+
+
+/*
+ * Initial startup.
+ */
 handleVideoChange();

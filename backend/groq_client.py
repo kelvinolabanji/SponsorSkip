@@ -4,259 +4,285 @@ import json
 from groq import Groq
 
 
-# --------------------------------------------------
-# Groq client
-# --------------------------------------------------
-
 client = Groq(
     api_key=os.environ["GROQ_API_KEY"]
 )
 
 
-# --------------------------------------------------
-# Sponsor detection prompt
-# --------------------------------------------------
-
 SYSTEM_PROMPT = """
 You are a highly accurate YouTube sponsor-segment detection system.
 
-Your job is NOT simply to find mentions of companies or sponsors.
+Your job is to identify the COMPLETE CONTIGUOUS SPONSOR/ADVERTISEMENT
+SECTION of a YouTube video.
 
-Your job is to identify the ACTUAL CONTIGUOUS PROMOTIONAL SEGMENT
-that a viewer would reasonably want to skip.
+The goal is to determine exactly where the sponsor segment STARTS
+and exactly where it ENDS.
 
 ============================================================
-IMPORTANT DISTINCTION
+MOST IMPORTANT RULE
 ============================================================
 
-There are THREE different things you may encounter:
+DO NOT only look for the moment where the creator explicitly says:
 
-1. SPONSOR MENTION
+- "This video is sponsored by..."
+- "Today's sponsor is..."
+- "Thanks to..."
+- the sponsor's name
+- a discount code
+- a URL
 
-A casual mention of a company, product, or service.
+Those phrases may occur AFTER the sponsor segment has already started.
 
-Example:
-"I use PrizePicks sometimes."
+The sponsor segment can begin BEFORE the explicit sponsorship
+disclosure.
 
-This is NOT a sponsor segment.
+For example:
 
-------------------------------------------------------------
+[04:30] I've been using this product for a long time.
+[04:40] The reason I started using it was because...
+[04:55] It has helped me with...
+[05:10] That's why I really like using it.
+[05:20] Today's video is sponsored by X.
+[05:30] X gives you...
+[05:45] You can use my code...
+[05:55] Thanks to X for sponsoring this video.
+[06:02] Anyway, let's get back to the video.
 
-2. SPONSOR DISCLOSURE
+The COMPLETE sponsor segment is approximately:
 
-A short disclosure telling the viewer that the video has a sponsor.
+START = 04:30
+END = 06:02
 
-Examples:
+NOT:
 
-"This video is sponsored by PrizePicks."
+START = 05:20
+END = 05:55
 
-"This video is presented by PrizePicks."
+============================================================
+SPONSOR SEGMENT START
+============================================================
 
-"Thanks to PrizePicks for sponsoring today's video."
+Find the EARLIEST timestamp where the creator transitions from
+normal video content into the sponsor-related discussion.
 
-A disclosure by itself is NOT the sponsor segment.
+This may be:
 
-DO NOT start a sponsor segment at the disclosure timestamp
-unless the actual promotional content begins there and continues
-as a genuine advertisement.
+- the first discussion of the sponsored product
+- the creator explaining why they use the product
+- a personal story about the product
+- backstory about how they discovered the product
+- explaining a problem that the product solves
+- explaining their experience with the product
+- introducing the product before explicitly saying it is sponsored
+- the beginning of a sponsor story or advertisement
+
+If the creator is clearly discussing the sponsor/product as part
+of the upcoming advertisement, include that material.
+
+DO NOT wait for the explicit phrase:
+
+"This video is sponsored by..."
+
+The advertisement may have already started.
+
+============================================================
+SPONSOR SEGMENT END
+============================================================
+
+Find the point where the creator has clearly FINISHED the sponsor
+discussion and returns to the normal subject of the video.
+
+The ending may happen AFTER:
+
+- the product explanation
+- the promotional pitch
+- the discount code
+- the URL
+- the call to action
+- "thanks to X for sponsoring"
+- other closing sponsor remarks
+
+For example:
+
+[05:45] Use my code KELVIN for 20% off.
+[05:55] Thanks again to X for sponsoring this video.
+[06:00] And now let's get back to what we were talking about.
+[06:05] So, as I was saying about today's match...
+
+The sponsor segment should include the closing thanks.
+
+END should be around 06:00-06:05,
+not 05:55.
+
+============================================================
+IMPORTANT: BACKSTORY
+============================================================
+
+A sponsor advertisement does NOT necessarily begin with an obvious
+advertising phrase.
+
+Creators often make sponsor reads sound like normal conversation.
+
+For example:
+
+"I've actually been using X for about six months now."
+
+"One thing I noticed when I started using X was..."
+
+"I originally started using this because..."
+
+"Before we continue, I want to tell you about..."
+
+These can be the START of the sponsor segment if the surrounding
+context shows that the creator has transitioned into talking about
+the sponsor as part of the advertisement.
+
+Include this earlier material.
+
+============================================================
+IMPORTANT: SPONSOR DISCLOSURE
+============================================================
+
+A sponsorship disclosure by itself is NOT enough to create a
+segment.
 
 For example:
 
 [00:11] This video is presented by PrizePicks.
-[00:14] Anyway, let's get into today's video.
-[00:20] Today we're talking about...
+[00:14] Anyway, let's talk about today's game.
 
 DO NOT return:
 
-start = 11
+00:11 -> 00:14
 
-------------------------------------------------------------
-
-3. ACTUAL SPONSOR SEGMENT
-
-This is a contiguous portion of the video where the creator
-actively promotes the sponsor.
-
-Examples include:
-
-- explaining the sponsor's product or service
-- explaining how the product works
-- explaining why viewers should use it
-- giving a discount code
-- giving an affiliate code
-- directing viewers to a sponsor URL
-- giving a promotional call to action
-- describing sponsor features or benefits
-- encouraging viewers to sign up, download, purchase, or use
-  the sponsor's service
-
-Example:
-
-[05:01] Now let's talk about today's sponsor, PrizePicks.
-[05:08] PrizePicks is a daily fantasy sports platform...
-[05:20] You can pick players...
-[05:35] Use my code KELVIN...
-[05:48] Go to prizepicks.com...
-[06:02] Anyway, let's get back to the video.
-
-This IS an actual sponsor segment.
-
-The correct result would be approximately:
-
-start = 301
-end = 362
-
-NOT:
-
-start = 11
-end = 362
-
-============================================================
-CORE RULE
-============================================================
-
-ONLY return a segment when there is a genuine CONTIGUOUS
-PROMOTIONAL BLOCK.
-
-Do not turn isolated sponsor mentions into sponsor segments.
-
-Do not connect a sponsor disclosure to a later sponsor segment
-just because they mention the same company.
-
-============================================================
-START TIMESTAMP
-============================================================
-
-The START must be the timestamp where the ACTUAL PROMOTIONAL
-CONTENT begins.
-
-Do NOT use:
-
-- an earlier sponsor disclosure
-- an earlier company mention
-- an earlier casual product mention
-- the beginning of the video
-- a title/introduction mentioning the sponsor
-
-If the creator says:
-
-[00:11] This video is presented by PrizePicks.
-[00:13] Now let's talk about basketball.
-...
-[05:01] Let's talk about PrizePicks.
-[05:08] PrizePicks lets you...
-
-START = 05:01
-
-NOT 00:11.
-
-============================================================
-END TIMESTAMP
-============================================================
-
-The END must be where the creator finishes the promotional
-content and returns to normal video content.
-
-Look for transitions such as:
-
-- "Anyway, back to the video."
-- "Now let's continue."
-- "Let's get back to..."
-- returning directly to the normal topic
-- clearly ending the advertisement
-
-Do not extend the sponsor segment into unrelated content.
+However, if the disclosure is immediately followed by a genuine
+sponsor discussion, the segment may begin at the disclosure or
+slightly before it if the promotional discussion already started.
 
 ============================================================
 SHORT MENTIONS
 ============================================================
 
-Do NOT skip very short mentions merely because they contain
-a sponsor or company name.
+Do NOT flag ordinary short mentions.
+
+Examples:
+
+"I use X sometimes."
+
+"X is a company that makes..."
+
+"I bought this from X."
+
+"Thanks to X for sponsoring the video."
+
+A short isolated mention is not enough.
+
+However, if the short mention is part of a larger contiguous
+sponsor discussion, include it as part of that sponsor segment.
+
+============================================================
+NORMAL CONTENT BETWEEN SPONSOR REFERENCES
+============================================================
+
+Do NOT connect separate sponsor-related moments across normal
+video content.
 
 For example:
 
-[02:10] We are sponsored by X.
+[00:10] This video is sponsored by X.
+[00:15] Anyway, let's talk about football.
+...
+[04:30] Let's talk about today's game.
+...
+[10:00] X has a new product...
 
-This alone should generally NOT become a skippable segment.
+Do NOT create:
 
-Similarly:
+00:10 -> 10:00
 
-[02:10] I use X all the time.
+The sponsor segment must be a CONTIGUOUS promotional section.
 
-This is NOT a sponsor segment.
+============================================================
+WHAT SHOULD BE INCLUDED
+============================================================
 
-A short segment should only be considered a sponsor if there is
-strong evidence of actual promotional activity, such as:
+Include genuine promotional material such as:
 
-- discount code
-- affiliate code
-- URL
-- call to action
-- explicit product promotion
+- sponsor introductions
+- sponsor/product backstory
+- personal experience used to promote the product
+- explanations of why the creator uses the product
+- product features
+- product benefits
+- explanations of how the product works
+- reasons viewers should use the product
+- discount codes
+- affiliate codes
+- promotional URLs
 - sign-up instructions
 - purchase instructions
-
-Duration alone must NOT determine whether something is a sponsor.
-
-============================================================
-LONG SEGMENTS
-============================================================
-
-Be suspicious of extremely long sponsor segments.
-
-Do NOT assume:
-
-"Company mentioned at 00:10"
-+
-"company promoted at 05:00"
-
-means:
-
-00:10 -> 05:00
-
-The sponsor segment should normally be the contiguous promotional
-block around the actual advertisement.
-
-If there is normal content between two sponsor mentions,
-they are separate events.
+- calls to action
+- promotional offers
+- sponsor closing remarks
+- thanks to the sponsor when they are part of the advertisement
 
 ============================================================
-WHAT TO FLAG
+WHAT SHOULD NOT BE INCLUDED
 ============================================================
 
-FLAG genuine:
-
-- paid sponsor reads
-- dedicated advertisements
-- affiliate promotions
-- discount codes
-- promotional URLs
-- sponsor product explanations
-- sponsor calls to action
-- creator promotions of products/services
-- merch promotions
-- Patreon promotions
-- membership promotions
-
-============================================================
-WHAT NOT TO FLAG
-============================================================
-
-DO NOT FLAG:
+Do NOT flag:
 
 - casual product mentions
-- normal discussion of products
-- news about a company
-- a company being used as an example
-- normal recommendations
-- products naturally appearing in the content
-- sponsor disclosures by themselves
-- "this video is sponsored by..." by itself
-- normal "like and subscribe"
-- normal introductions
+- normal discussion of companies
+- news about companies
+- products naturally appearing in the video
+- unrelated discussion
+- normal YouTube introductions
 - normal conclusions
+- "like and subscribe"
 - normal discussion surrounding the sponsor
+- isolated sponsorship disclosures
+
+============================================================
+BOUNDARY RULE
+============================================================
+
+When deciding the START:
+
+Ask:
+
+"Is this the point where the creator begins talking about the
+sponsor/product as part of the advertisement?"
+
+If yes, START there.
+
+Do not wait for the explicit sponsorship disclosure.
+
+When deciding the END:
+
+Ask:
+
+"Has the creator clearly returned to the normal subject of the video?"
+
+If no, continue the sponsor segment.
+
+Do not stop merely because the creator has finished giving the
+discount code or URL.
+
+============================================================
+CONSERVATIVE BOUNDARIES
+============================================================
+
+When uncertain between two possible START timestamps, prefer the
+earlier timestamp ONLY when there is evidence that the earlier
+material is part of the sponsor discussion.
+
+When uncertain between two possible END timestamps, prefer the
+later timestamp ONLY when the creator is still clearly discussing
+the sponsor or closing the advertisement.
+
+Do NOT include unrelated normal content just to make the segment
+longer.
 
 ============================================================
 TIMESTAMP ACCURACY
@@ -266,18 +292,20 @@ The transcript uses:
 
 [MM:SS] text
 
-Use the timestamps directly.
+Use the timestamps from the transcript.
 
-The start and end should correspond as closely as possible
-to the actual promotional block.
+Return timestamps in seconds.
 
 Do not invent timestamps.
+
+The boundaries should be as close as possible to the actual
+transition into and out of the sponsor discussion.
 
 ============================================================
 OUTPUT
 ============================================================
 
-If there are NO genuine sponsor segments:
+If there are no genuine sponsor segments:
 
 {
   "segments": []
@@ -288,16 +316,13 @@ If there is a genuine sponsor segment:
 {
   "segments": [
     {
-      "start": 301.0,
+      "start": 270.0,
       "end": 362.0,
       "label": "sponsor",
-      "reason": "Dedicated promotional read containing product information and a call to action"
+      "reason": "Sponsor discussion begins with product backstory and continues through the promotional read and closing sponsor thanks"
     }
   ]
 }
-
-The "reason" should briefly explain why this is an actual
-promotional segment.
 
 Return ONLY valid JSON.
 
@@ -308,10 +333,6 @@ Do not use ```json.
 Do not include explanations outside the JSON.
 """
 
-
-# --------------------------------------------------
-# Sponsor detection
-# --------------------------------------------------
 
 def detect_sponsor_segments(
     transcript_text: str
@@ -327,24 +348,16 @@ def detect_sponsor_segments(
         f"{len(transcript_text)}"
     )
 
-    # --------------------------------------------------
-    # Split transcript into windows
-    # --------------------------------------------------
-
     chunks = split_transcript(
         transcript_text
     )
 
     print(
         f"Transcript split into "
-        f"{len(chunks)} detection windows."
+        f"{len(chunks)} overlapping detection windows."
     )
 
     all_segments = []
-
-    # --------------------------------------------------
-    # Analyze each window
-    # --------------------------------------------------
 
     for chunk_number, chunk in enumerate(
         chunks,
@@ -386,10 +399,6 @@ def detect_sponsor_segments(
                 max_tokens=700
             )
 
-            # --------------------------------------------------
-            # Get response
-            # --------------------------------------------------
-
             content = (
                 response
                 .choices[0]
@@ -398,7 +407,6 @@ def detect_sponsor_segments(
             )
 
             if not content:
-
                 raise RuntimeError(
                     "Groq returned an empty response."
                 )
@@ -406,10 +414,6 @@ def detect_sponsor_segments(
             print(
                 "Groq response received."
             )
-
-            # --------------------------------------------------
-            # Clean response
-            # --------------------------------------------------
 
             content = content.strip()
 
@@ -420,7 +424,6 @@ def detect_sponsor_segments(
                 ].strip()
 
                 if content.endswith("```"):
-
                     content = content[
                         :-3
                     ].strip()
@@ -432,14 +435,9 @@ def detect_sponsor_segments(
                 ].strip()
 
                 if content.endswith("```"):
-
                     content = content[
                         :-3
                     ].strip()
-
-            # --------------------------------------------------
-            # Parse JSON
-            # --------------------------------------------------
 
             try:
 
@@ -461,22 +459,13 @@ def detect_sponsor_segments(
                     "Groq returned invalid JSON."
                 ) from error
 
-            # --------------------------------------------------
-            # Validate top-level response
-            # --------------------------------------------------
-
             if not isinstance(
                 result,
                 dict
             ):
-
                 raise RuntimeError(
                     "Groq response was not a JSON object."
                 )
-
-            # --------------------------------------------------
-            # Extract segments
-            # --------------------------------------------------
 
             segments = result.get(
                 "segments",
@@ -487,15 +476,10 @@ def detect_sponsor_segments(
                 segments,
                 list
             ):
-
                 raise RuntimeError(
                     "Groq returned an invalid "
                     "'segments' value."
                 )
-
-            # --------------------------------------------------
-            # Validate segments
-            # --------------------------------------------------
 
             valid_segments = []
 
@@ -527,12 +511,7 @@ def detect_sponsor_segments(
                     TypeError,
                     ValueError
                 ):
-
                     continue
-
-                # --------------------------------------------------
-                # Basic timestamp validation
-                # --------------------------------------------------
 
                 if start < 0:
                     continue
@@ -542,21 +521,6 @@ def detect_sponsor_segments(
 
                 duration = end - start
 
-                # --------------------------------------------------
-                # Reject suspiciously large segments
-                #
-                # This protects us from exactly the problem we
-                # just encountered:
-                #
-                # 11s -> 365s
-                #
-                # when the actual ad was much later.
-                #
-                # We don't automatically reject every long ad,
-                # but anything above 5 minutes requires stronger
-                # evidence from the model.
-                # --------------------------------------------------
-
                 reason = str(
                     segment.get(
                         "reason",
@@ -564,15 +528,22 @@ def detect_sponsor_segments(
                     )
                 )
 
+                # Extremely long segments are suspicious.
+                # Do not automatically reject them if Groq
+                # has identified strong evidence of a genuine
+                # continuous sponsor discussion.
                 if duration > 300:
 
                     strong_indicators = [
+                        "sponsor",
+                        "sponsored",
+                        "promotion",
+                        "promotional",
+                        "advertisement",
+                        "product",
                         "discount",
                         "code",
                         "promo",
-                        "promotion",
-                        "sponsor",
-                        "sponsored",
                         "affiliate",
                         "sign up",
                         "signup",
@@ -600,10 +571,6 @@ def detect_sponsor_segments(
 
                         continue
 
-                # --------------------------------------------------
-                # Store validated segment
-                # --------------------------------------------------
-
                 valid_segments.append(
                     {
                         "start": start,
@@ -612,10 +579,6 @@ def detect_sponsor_segments(
                         "reason": reason
                     }
                 )
-
-            # --------------------------------------------------
-            # Store results
-            # --------------------------------------------------
 
             all_segments.extend(
                 valid_segments
@@ -662,21 +625,11 @@ def detect_sponsor_segments(
 
             print()
 
-            # Never fabricate sponsor results.
-
             continue
-
-    # --------------------------------------------------
-    # Merge duplicate / overlapping segments
-    # --------------------------------------------------
 
     all_segments = merge_segments(
         all_segments
     )
-
-    # --------------------------------------------------
-    # Final result
-    # --------------------------------------------------
 
     print()
     print("=" * 60)
@@ -717,13 +670,10 @@ def detect_sponsor_segments(
     return all_segments
 
 
-# --------------------------------------------------
-# Split transcript into windows
-# --------------------------------------------------
-
 def split_transcript(
     transcript_text: str,
-    max_chars: int = 7000
+    max_chars: int = 7000,
+    overlap_chars: int = 1500
 ) -> list[str]:
 
     lines = transcript_text.splitlines()
@@ -731,12 +681,11 @@ def split_transcript(
     chunks = []
 
     current_chunk = []
-
     current_length = 0
 
     for line in lines:
 
-        line_length = len(line)
+        line_length = len(line) + 1
 
         if (
             current_chunk
@@ -750,19 +699,44 @@ def split_transcript(
                 )
             )
 
-            current_chunk = []
+            # Keep the last portion of the previous
+            # window as context for the next window.
+            overlap_chunk = []
+            overlap_length = 0
 
-            current_length = 0
+            for previous_line in reversed(
+                current_chunk
+            ):
+
+                previous_length = (
+                    len(previous_line) + 1
+                )
+
+                if (
+                    overlap_length
+                    + previous_length
+                    > overlap_chars
+                ):
+                    break
+
+                overlap_chunk.insert(
+                    0,
+                    previous_line
+                )
+
+                overlap_length += (
+                    previous_length
+                )
+
+            current_chunk = overlap_chunk
+
+            current_length = overlap_length
 
         current_chunk.append(
             line
         )
 
         current_length += line_length
-
-    # --------------------------------------------------
-    # Add final window
-    # --------------------------------------------------
 
     if current_chunk:
 
@@ -775,20 +749,12 @@ def split_transcript(
     return chunks
 
 
-# --------------------------------------------------
-# Merge duplicate / overlapping segments
-# --------------------------------------------------
-
 def merge_segments(
     segments: list[dict]
 ) -> list[dict]:
 
     if not segments:
         return []
-
-    # --------------------------------------------------
-    # Sort chronologically
-    # --------------------------------------------------
 
     segments = sorted(
         segments,
@@ -799,17 +765,19 @@ def merge_segments(
         segments[0]
     ]
 
-    # --------------------------------------------------
-    # Merge overlapping / nearly adjacent segments
-    # --------------------------------------------------
-
     for current in segments[1:]:
 
         previous = merged[-1]
 
+        # Overlapping windows can cause the same sponsor
+        # segment to be detected more than once.
+        #
+        # Also merge segments that are extremely close
+        # together because the model may choose slightly
+        # different boundaries in different windows.
         if (
             current["start"]
-            <= previous["end"] + 2
+            <= previous["end"] + 3
         ):
 
             previous["end"] = max(
@@ -817,16 +785,21 @@ def merge_segments(
                 current["end"]
             )
 
-            # Preserve a useful reason.
+            if current.get("reason"):
 
-            if (
-                not previous.get("reason")
-                and current.get("reason")
-            ):
+                if previous.get("reason"):
 
-                previous["reason"] = (
-                    current["reason"]
-                )
+                    if current["reason"] not in previous["reason"]:
+
+                        previous["reason"] += (
+                            f"; {current['reason']}"
+                        )
+
+                else:
+
+                    previous["reason"] = (
+                        current["reason"]
+                    )
 
         else:
 
