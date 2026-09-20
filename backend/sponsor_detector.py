@@ -1,13 +1,5 @@
-from groq_client import (
-    detect_sponsor_segments as detect_with_groq
-)
+"""Backward-compatible import path for sponsor detection."""
 
+from detection.pipeline import detect_sponsor_segments
 
-def detect_sponsor_segments(
-    transcript_text: str
-) -> list[dict]:
-
-    return detect_with_groq(
-        transcript_text
-    )
-    
+__all__ = ["detect_sponsor_segments"]
