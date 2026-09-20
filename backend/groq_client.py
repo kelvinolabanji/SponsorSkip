@@ -1,337 +1,510 @@
-import os
 import json
+import re
+import time
 
 from groq import Groq
+from dotenv import load_dotenv
+import os
+
+
+load_dotenv()
 
 
 client = Groq(
-    api_key=os.environ["GROQ_API_KEY"]
+    api_key=os.getenv("GROQ_API_KEY")
 )
 
 
+MODEL = "openai/gpt-oss-20b"
+
+WINDOW_SIZE = 5500
+OVERLAP_SIZE = 1000
+
+MAX_RETRIES = 4
+
+RATE_LIMIT_WAIT = 3
+
+MAX_REASON_LENGTH = 250
+
+
 SYSTEM_PROMPT = """
-You are a highly accurate YouTube sponsor-segment detection system.
-
-Your job is to identify the COMPLETE CONTIGUOUS SPONSOR/ADVERTISEMENT
-SECTION of a YouTube video.
-
-The goal is to determine exactly where the sponsor segment STARTS
-and exactly where it ENDS.
-
-============================================================
-MOST IMPORTANT RULE
-============================================================
-
-DO NOT only look for the moment where the creator explicitly says:
-
-- "This video is sponsored by..."
-- "Today's sponsor is..."
-- "Thanks to..."
-- the sponsor's name
-- a discount code
-- a URL
-
-Those phrases may occur AFTER the sponsor segment has already started.
-
-The sponsor segment can begin BEFORE the explicit sponsorship
-disclosure.
-
-For example:
-
-[04:30] I've been using this product for a long time.
-[04:40] The reason I started using it was because...
-[04:55] It has helped me with...
-[05:10] That's why I really like using it.
-[05:20] Today's video is sponsored by X.
-[05:30] X gives you...
-[05:45] You can use my code...
-[05:55] Thanks to X for sponsoring this video.
-[06:02] Anyway, let's get back to the video.
-
-The COMPLETE sponsor segment is approximately:
-
-START = 04:30
-END = 06:02
-
-NOT:
-
-START = 05:20
-END = 05:55
-
-============================================================
-SPONSOR SEGMENT START
-============================================================
-
-Find the EARLIEST timestamp where the creator transitions from
-normal video content into the sponsor-related discussion.
-
-This may be:
-
-- the first discussion of the sponsored product
-- the creator explaining why they use the product
-- a personal story about the product
-- backstory about how they discovered the product
-- explaining a problem that the product solves
-- explaining their experience with the product
-- introducing the product before explicitly saying it is sponsored
-- the beginning of a sponsor story or advertisement
-
-If the creator is clearly discussing the sponsor/product as part
-of the upcoming advertisement, include that material.
-
-DO NOT wait for the explicit phrase:
-
-"This video is sponsored by..."
-
-The advertisement may have already started.
-
-============================================================
-SPONSOR SEGMENT END
-============================================================
-
-Find the point where the creator has clearly FINISHED the sponsor
-discussion and returns to the normal subject of the video.
-
-The ending may happen AFTER:
-
-- the product explanation
-- the promotional pitch
-- the discount code
-- the URL
-- the call to action
-- "thanks to X for sponsoring"
-- other closing sponsor remarks
-
-For example:
-
-[05:45] Use my code KELVIN for 20% off.
-[05:55] Thanks again to X for sponsoring this video.
-[06:00] And now let's get back to what we were talking about.
-[06:05] So, as I was saying about today's match...
-
-The sponsor segment should include the closing thanks.
-
-END should be around 06:00-06:05,
-not 05:55.
-
-============================================================
-IMPORTANT: BACKSTORY
-============================================================
-
-A sponsor advertisement does NOT necessarily begin with an obvious
-advertising phrase.
-
-Creators often make sponsor reads sound like normal conversation.
-
-For example:
-
-"I've actually been using X for about six months now."
-
-"One thing I noticed when I started using X was..."
-
-"I originally started using this because..."
-
-"Before we continue, I want to tell you about..."
-
-These can be the START of the sponsor segment if the surrounding
-context shows that the creator has transitioned into talking about
-the sponsor as part of the advertisement.
-
-Include this earlier material.
-
-============================================================
-IMPORTANT: SPONSOR DISCLOSURE
-============================================================
-
-A sponsorship disclosure by itself is NOT enough to create a
-segment.
-
-For example:
-
-[00:11] This video is presented by PrizePicks.
-[00:14] Anyway, let's talk about today's game.
-
-DO NOT return:
-
-00:11 -> 00:14
-
-However, if the disclosure is immediately followed by a genuine
-sponsor discussion, the segment may begin at the disclosure or
-slightly before it if the promotional discussion already started.
-
-============================================================
-SHORT MENTIONS
-============================================================
-
-Do NOT flag ordinary short mentions.
-
-Examples:
-
-"I use X sometimes."
-
-"X is a company that makes..."
-
-"I bought this from X."
-
-"Thanks to X for sponsoring the video."
-
-A short isolated mention is not enough.
-
-However, if the short mention is part of a larger contiguous
-sponsor discussion, include it as part of that sponsor segment.
-
-============================================================
-NORMAL CONTENT BETWEEN SPONSOR REFERENCES
-============================================================
-
-Do NOT connect separate sponsor-related moments across normal
-video content.
-
-For example:
-
-[00:10] This video is sponsored by X.
-[00:15] Anyway, let's talk about football.
-...
-[04:30] Let's talk about today's game.
-...
-[10:00] X has a new product...
-
-Do NOT create:
-
-00:10 -> 10:00
-
-The sponsor segment must be a CONTIGUOUS promotional section.
-
-============================================================
-WHAT SHOULD BE INCLUDED
-============================================================
-
-Include genuine promotional material such as:
-
-- sponsor introductions
-- sponsor/product backstory
-- personal experience used to promote the product
-- explanations of why the creator uses the product
-- product features
-- product benefits
-- explanations of how the product works
-- reasons viewers should use the product
-- discount codes
-- affiliate codes
-- promotional URLs
-- sign-up instructions
-- purchase instructions
-- calls to action
-- promotional offers
-- sponsor closing remarks
-- thanks to the sponsor when they are part of the advertisement
-
-============================================================
-WHAT SHOULD NOT BE INCLUDED
-============================================================
-
-Do NOT flag:
-
-- casual product mentions
-- normal discussion of companies
-- news about companies
-- products naturally appearing in the video
-- unrelated discussion
-- normal YouTube introductions
-- normal conclusions
-- "like and subscribe"
-- normal discussion surrounding the sponsor
-- isolated sponsorship disclosures
-
-============================================================
-BOUNDARY RULE
-============================================================
-
-When deciding the START:
-
-Ask:
-
-"Is this the point where the creator begins talking about the
-sponsor/product as part of the advertisement?"
-
-If yes, START there.
-
-Do not wait for the explicit sponsorship disclosure.
-
-When deciding the END:
-
-Ask:
-
-"Has the creator clearly returned to the normal subject of the video?"
-
-If no, continue the sponsor segment.
-
-Do not stop merely because the creator has finished giving the
-discount code or URL.
-
-============================================================
-CONSERVATIVE BOUNDARIES
-============================================================
-
-When uncertain between two possible START timestamps, prefer the
-earlier timestamp ONLY when there is evidence that the earlier
-material is part of the sponsor discussion.
-
-When uncertain between two possible END timestamps, prefer the
-later timestamp ONLY when the creator is still clearly discussing
-the sponsor or closing the advertisement.
-
-Do NOT include unrelated normal content just to make the segment
-longer.
-
-============================================================
-TIMESTAMP ACCURACY
-============================================================
-
-The transcript uses:
-
-[MM:SS] text
-
-Use the timestamps from the transcript.
-
-Return timestamps in seconds.
-
-Do not invent timestamps.
-
-The boundaries should be as close as possible to the actual
-transition into and out of the sponsor discussion.
-
-============================================================
-OUTPUT
-============================================================
-
-If there are no genuine sponsor segments:
+You are a precise YouTube sponsor-segment detector.
+
+Your job is to identify CONTIGUOUS sections of a YouTube transcript that are actual sponsor advertisements.
+
+A sponsor segment may begin BEFORE the creator explicitly says:
+- "sponsored by"
+- "this video is sponsored by"
+- "thanks to our sponsor"
+
+If the transcript shows the creator transitioning into a sponsor discussion, giving personal experience with the product, explaining the product, recommending it, giving a discount code/link, or otherwise delivering the promotional message, include that entire contiguous promotional section.
+
+The sponsor segment should end only when the creator clearly returns to their normal video content.
+
+IMPORTANT:
+
+1. Do NOT mark an isolated sponsorship disclosure as a sponsor segment.
+2. Do NOT mark ordinary discussion of a company/product as sponsorship unless it is clearly promotional.
+3. Do NOT mark unrelated mentions of products.
+4. Do NOT combine separate sponsor segments.
+5. Start the segment early enough to include the sponsor introduction, setup, personal story, or transition if those are clearly part of the advertisement.
+6. End the segment after the sponsor's closing message, thanks, discount code, or final promotional statement when the creator then returns to normal content.
+7. Use the timestamps from the transcript.
+8. Only return segments that are supported by the transcript.
+9. Be conservative when evidence is unclear.
+10. Output ONLY valid JSON.
+
+Return exactly this structure:
+
+{
+  "segments": [
+    {
+      "start": 321.0,
+      "end": 377.0,
+      "label": "sponsor",
+      "reason": "Short explanation"
+    }
+  ]
+}
+
+If there are no sponsors:
 
 {
   "segments": []
 }
 
-If there is a genuine sponsor segment:
+Keep the reason SHORT.
 
-{
-  "segments": [
-    {
-      "start": 270.0,
-      "end": 362.0,
-      "label": "sponsor",
-      "reason": "Sponsor discussion begins with product backstory and continues through the promotional read and closing sponsor thanks"
-    }
-  ]
-}
-
-Return ONLY valid JSON.
-
-Do not use markdown.
-
-Do not use ```json.
-
-Do not include explanations outside the JSON.
+Do not include markdown.
+Do not include ```json.
+Do not include any text outside the JSON object.
 """
+
+
+def extract_json(text: str) -> dict:
+    """
+    Attempts to extract a JSON object from the model response.
+
+    Handles:
+    - normal JSON
+    - accidental markdown fences
+    - extra text surrounding JSON
+    """
+
+    if not text:
+        raise ValueError("Groq returned an empty response.")
+
+    text = text.strip()
+
+    # Remove markdown fences if the model accidentally adds them.
+    text = re.sub(
+        r"^```(?:json)?\s*",
+        "",
+        text,
+        flags=re.IGNORECASE
+    )
+
+    text = re.sub(
+        r"\s*```$",
+        "",
+        text
+    )
+
+    text = text.strip()
+
+    # First attempt: entire response.
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        pass
+
+    # Second attempt: find the JSON object.
+    start = text.find("{")
+    end = text.rfind("}")
+
+    if start != -1 and end != -1 and end > start:
+        candidate = text[start:end + 1]
+
+        try:
+            return json.loads(candidate)
+        except json.JSONDecodeError:
+            pass
+
+    raise ValueError(
+        "Groq returned invalid or incomplete JSON."
+    )
+
+
+def validate_segments(data: dict) -> list[dict]:
+    """
+    Validate and normalize Groq's detected sponsor segments.
+    """
+
+    if not isinstance(data, dict):
+        raise ValueError(
+            "Groq response is not a JSON object."
+        )
+
+    raw_segments = data.get("segments", [])
+
+    if not isinstance(raw_segments, list):
+        raise ValueError(
+            "Groq 'segments' field is not a list."
+        )
+
+    segments = []
+
+    for segment in raw_segments:
+
+        if not isinstance(segment, dict):
+            continue
+
+        try:
+            start = float(segment["start"])
+            end = float(segment["end"])
+        except (
+            KeyError,
+            TypeError,
+            ValueError
+        ):
+            continue
+
+        if start < 0:
+            continue
+
+        if end <= start:
+            continue
+
+        duration = end - start
+
+        # A single sponsor read this long is suspicious.
+        # This protects against a model accidentally selecting
+        # almost the entire video.
+        if duration > 600:
+            print(
+                f"Ignoring suspiciously long segment: "
+                f"{start:.2f} -> {end:.2f}"
+            )
+            continue
+
+        reason = str(
+            segment.get(
+                "reason",
+                "Sponsor segment detected."
+            )
+        ).strip()
+
+        if len(reason) > MAX_REASON_LENGTH:
+            reason = reason[:MAX_REASON_LENGTH].rstrip() + "..."
+
+        segments.append({
+            "start": round(start, 2),
+            "end": round(end, 2),
+            "label": "sponsor",
+            "reason": reason
+        })
+
+    return segments
+
+
+def call_groq(transcript_window: str) -> list[dict]:
+    """
+    Send one transcript window to Groq.
+
+    Includes retry handling for:
+    - invalid JSON
+    - truncated responses
+    - rate limits
+    - temporary API failures
+    """
+
+    for attempt in range(1, MAX_RETRIES + 1):
+
+        print(
+            f"Sending window to Groq "
+            f"(attempt {attempt}/{MAX_RETRIES})..."
+        )
+
+        try:
+
+            response = client.chat.completions.create(
+                model=MODEL,
+
+                messages=[
+                    {
+                        "role": "system",
+                        "content": SYSTEM_PROMPT
+                    },
+                    {
+                        "role": "user",
+                        "content": (
+                            "Analyze this transcript window "
+                            "for sponsor segments.\n\n"
+                            + transcript_window
+                        )
+                    }
+                ],
+
+                temperature=0,
+
+                # Keep the response intentionally small.
+                max_tokens=700
+            )
+
+            content = response.choices[0].message.content
+
+            if not content:
+                raise ValueError(
+                    "Groq returned an empty response."
+                )
+
+            print("Groq response received.")
+
+            try:
+
+                data = extract_json(content)
+
+                segments = validate_segments(data)
+
+                print(
+                    f"Groq detected "
+                    f"{len(segments)} sponsor(s) "
+                    f"in this window."
+                )
+
+                return segments
+
+            except ValueError as json_error:
+
+                print(
+                    "Groq returned invalid JSON."
+                )
+
+                print(
+                    f"Raw response: {content}"
+                )
+
+                print(
+                    f"JSON error: {json_error}"
+                )
+
+                if attempt < MAX_RETRIES:
+
+                    wait_time = 1.5 * attempt
+
+                    print(
+                        f"Retrying malformed response "
+                        f"in {wait_time:.1f}s..."
+                    )
+
+                    time.sleep(wait_time)
+
+                    continue
+
+                print(
+                    "Maximum JSON retries reached."
+                )
+
+                return []
+
+        except Exception as error:
+
+            error_text = str(error)
+
+            # -------------------------------------------------
+            # GROQ RATE LIMIT
+            # -------------------------------------------------
+
+            if (
+                "429" in error_text
+                or "rate_limit_exceeded" in error_text
+                or "Rate limit" in error_text
+            ):
+
+                # Groq normally tells us how long to wait.
+                wait_time = RATE_LIMIT_WAIT
+
+                match = re.search(
+                    r"Please try again in ([0-9.]+)s",
+                    error_text
+                )
+
+                if match:
+
+                    try:
+                        wait_time = float(
+                            match.group(1)
+                        )
+                    except ValueError:
+                        pass
+
+                # Add a small safety margin.
+                wait_time += 0.5
+
+                print()
+                print(
+                    "Groq rate limit reached."
+                )
+
+                print(
+                    f"Waiting {wait_time:.1f}s "
+                    f"before retrying..."
+                )
+
+                if attempt < MAX_RETRIES:
+
+                    time.sleep(wait_time)
+
+                    continue
+
+                print(
+                    "Maximum rate-limit retries reached."
+                )
+
+                return []
+
+            # -------------------------------------------------
+            # OTHER TEMPORARY API ERRORS
+            # -------------------------------------------------
+
+            print(
+                f"Groq request failed: {error}"
+            )
+
+            if attempt < MAX_RETRIES:
+
+                wait_time = 2 * attempt
+
+                print(
+                    f"Retrying in "
+                    f"{wait_time}s..."
+                )
+
+                time.sleep(wait_time)
+
+                continue
+
+            print(
+                "Maximum retries reached."
+            )
+
+            return []
+
+    return []
+
+
+def merge_segments(
+    segments: list[dict]
+) -> list[dict]:
+    """
+    Merge overlapping or very close sponsor detections.
+
+    Overlapping transcript windows can cause the same sponsor
+    to be detected more than once.
+    """
+
+    if not segments:
+        return []
+
+    segments = sorted(
+        segments,
+        key=lambda segment: segment["start"]
+    )
+
+    merged = []
+
+    current = segments[0].copy()
+
+    for next_segment in segments[1:]:
+
+        # Allow a small gap because overlapping windows may
+        # produce slightly different boundaries.
+        gap = (
+            next_segment["start"]
+            - current["end"]
+        )
+
+        if gap <= 8:
+
+            current["end"] = max(
+                current["end"],
+                next_segment["end"]
+            )
+
+            current_reason = current.get(
+                "reason",
+                ""
+            )
+
+            next_reason = next_segment.get(
+                "reason",
+                ""
+            )
+
+            if (
+                next_reason
+                and next_reason not in current_reason
+            ):
+
+                combined_reason = (
+                    current_reason
+                    + " "
+                    + next_reason
+                )
+
+                current["reason"] = (
+                    combined_reason[
+                        :MAX_REASON_LENGTH
+                    ]
+                )
+
+        else:
+
+            merged.append(current)
+
+            current = next_segment.copy()
+
+    merged.append(current)
+
+    return merged
+
+
+def split_transcript(
+    transcript_text: str
+) -> list[str]:
+    """
+    Split transcript into overlapping windows.
+
+    Windows are kept smaller than before to reduce TPM usage
+    and make truncated model responses less likely.
+    """
+
+    windows = []
+
+    start = 0
+    transcript_length = len(
+        transcript_text
+    )
+
+    while start < transcript_length:
+
+        end = min(
+            start + WINDOW_SIZE,
+            transcript_length
+        )
+
+        window = transcript_text[
+            start:end
+        ]
+
+        windows.append(window)
+
+        if end >= transcript_length:
+            break
+
+        start = end - OVERLAP_SIZE
+
+    return windows
 
 
 def detect_sponsor_segments(
@@ -348,463 +521,117 @@ def detect_sponsor_segments(
         f"{len(transcript_text)}"
     )
 
-    chunks = split_transcript(
+    windows = split_transcript(
         transcript_text
     )
 
     print(
         f"Transcript split into "
-        f"{len(chunks)} overlapping detection windows."
+        f"{len(windows)} overlapping "
+        f"detection windows."
     )
 
     all_segments = []
 
-    for chunk_number, chunk in enumerate(
-        chunks,
+    for index, window in enumerate(
+        windows,
         start=1
     ):
 
         print()
         print("-" * 60)
-
         print(
             f"GROQ WINDOW "
-            f"{chunk_number}/{len(chunks)}"
+            f"{index}/{len(windows)}"
         )
 
         print(
-            f"Characters: {len(chunk)}"
+            f"Characters: "
+            f"{len(window)}"
         )
 
-        print(
-            "Sending window to Groq..."
+        segments = call_groq(
+            window
         )
 
-        try:
-
-            response = client.chat.completions.create(
-                model="openai/gpt-oss-20b",
-
-                messages=[
-                    {
-                        "role": "system",
-                        "content": SYSTEM_PROMPT
-                    },
-                    {
-                        "role": "user",
-                        "content": chunk
-                    }
-                ],
-
-                max_tokens=700
-            )
-
-            content = (
-                response
-                .choices[0]
-                .message
-                .content
-            )
-
-            if not content:
-                raise RuntimeError(
-                    "Groq returned an empty response."
-                )
+        if segments:
 
             print(
-                "Groq response received."
+                f"Window {index} produced "
+                f"{len(segments)} sponsor segment(s)."
             )
-
-            content = content.strip()
-
-            if content.startswith("```json"):
-
-                content = content[
-                    len("```json"):
-                ].strip()
-
-                if content.endswith("```"):
-                    content = content[
-                        :-3
-                    ].strip()
-
-            elif content.startswith("```"):
-
-                content = content[
-                    len("```"):
-                ].strip()
-
-                if content.endswith("```"):
-                    content = content[
-                        :-3
-                    ].strip()
-
-            try:
-
-                result = json.loads(
-                    content
-                )
-
-            except json.JSONDecodeError as error:
-
-                print(
-                    "Groq returned invalid JSON."
-                )
-
-                print(
-                    f"Raw response: {content}"
-                )
-
-                raise RuntimeError(
-                    "Groq returned invalid JSON."
-                ) from error
-
-            if not isinstance(
-                result,
-                dict
-            ):
-                raise RuntimeError(
-                    "Groq response was not a JSON object."
-                )
-
-            segments = result.get(
-                "segments",
-                []
-            )
-
-            if not isinstance(
-                segments,
-                list
-            ):
-                raise RuntimeError(
-                    "Groq returned an invalid "
-                    "'segments' value."
-                )
-
-            valid_segments = []
 
             for segment in segments:
 
-                if not isinstance(
-                    segment,
-                    dict
-                ):
-                    continue
-
-                if (
-                    "start" not in segment
-                    or "end" not in segment
-                ):
-                    continue
-
-                try:
-
-                    start = float(
-                        segment["start"]
-                    )
-
-                    end = float(
-                        segment["end"]
-                    )
-
-                except (
-                    TypeError,
-                    ValueError
-                ):
-                    continue
-
-                if start < 0:
-                    continue
-
-                if end <= start:
-                    continue
-
-                duration = end - start
-
-                reason = str(
-                    segment.get(
-                        "reason",
-                        ""
-                    )
-                )
-
-                # Extremely long segments are suspicious.
-                # Do not automatically reject them if Groq
-                # has identified strong evidence of a genuine
-                # continuous sponsor discussion.
-                if duration > 300:
-
-                    strong_indicators = [
-                        "sponsor",
-                        "sponsored",
-                        "promotion",
-                        "promotional",
-                        "advertisement",
-                        "product",
-                        "discount",
-                        "code",
-                        "promo",
-                        "affiliate",
-                        "sign up",
-                        "signup",
-                        "use my",
-                        "call to action",
-                        "url",
-                        "website"
-                    ]
-
-                    reason_lower = reason.lower()
-
-                    has_strong_reason = any(
-                        indicator in reason_lower
-                        for indicator in strong_indicators
-                    )
-
-                    if not has_strong_reason:
-
-                        print(
-                            f"Rejected suspiciously long "
-                            f"segment: "
-                            f"{start:.2f}s -> "
-                            f"{end:.2f}s"
-                        )
-
-                        continue
-
-                valid_segments.append(
-                    {
-                        "start": start,
-                        "end": end,
-                        "label": "sponsor",
-                        "reason": reason
-                    }
-                )
-
-            all_segments.extend(
-                valid_segments
-            )
-
-            print(
-                f"Groq detected "
-                f"{len(valid_segments)} sponsor(s) "
-                f"in window {chunk_number}."
-            )
-
-            for segment in valid_segments:
-
-                duration = (
-                    segment["end"]
-                    - segment["start"]
+                print(
+                    f"  "
+                    f"{segment['start']}s -> "
+                    f"{segment['end']}s"
                 )
 
                 print(
-                    f"  Sponsor: "
-                    f"{segment['start']:.2f}s -> "
-                    f"{segment['end']:.2f}s "
-                    f"({duration:.2f}s)"
+                    f"  Reason: "
+                    f"{segment['reason']}"
                 )
 
-                if segment["reason"]:
-
-                    print(
-                        f"  Reason: "
-                        f"{segment['reason']}"
-                    )
-
-        except Exception as error:
-
-            print()
-            print(
-                f"Groq failed on window "
-                f"{chunk_number}:"
+            all_segments.extend(
+                segments
             )
 
+        else:
+
             print(
-                str(error)
+                f"Window {index} produced "
+                f"no sponsor segments."
             )
 
-            print()
+        # Small pause between successful requests.
+        # This reduces the chance of immediately hitting
+        # the rolling TPM limit.
+        if index < len(windows):
 
-            continue
+            print(
+                "Waiting briefly before "
+                "next Groq window..."
+            )
 
-    all_segments = merge_segments(
+            time.sleep(1.0)
+
+    print()
+    print("-" * 60)
+
+    print(
+        f"Raw detected segments: "
+        f"{len(all_segments)}"
+    )
+
+    merged_segments = merge_segments(
         all_segments
     )
 
     print()
     print("=" * 60)
-
-    print(
-        "GROQ DETECTION COMPLETE"
-    )
+    print("GROQ DETECTION COMPLETE")
+    print("=" * 60)
 
     print(
         f"Total sponsor segments: "
-        f"{len(all_segments)}"
+        f"{len(merged_segments)}"
     )
 
-    for segment in all_segments:
+    for segment in merged_segments:
 
-        duration = (
-            segment["end"]
-            - segment["start"]
+        print(
+            f"  "
+            f"{segment['start']}s -> "
+            f"{segment['end']}s"
         )
 
         print(
-            f"  FINAL: "
-            f"{segment['start']:.2f}s -> "
-            f"{segment['end']:.2f}s "
-            f"({duration:.2f}s)"
+            f"  {segment['reason']}"
         )
-
-        if segment.get("reason"):
-
-            print(
-                f"  Reason: "
-                f"{segment['reason']}"
-            )
 
     print("=" * 60)
     print()
 
-    return all_segments
-
-
-def split_transcript(
-    transcript_text: str,
-    max_chars: int = 7000,
-    overlap_chars: int = 1500
-) -> list[str]:
-
-    lines = transcript_text.splitlines()
-
-    chunks = []
-
-    current_chunk = []
-    current_length = 0
-
-    for line in lines:
-
-        line_length = len(line) + 1
-
-        if (
-            current_chunk
-            and current_length + line_length
-            > max_chars
-        ):
-
-            chunks.append(
-                "\n".join(
-                    current_chunk
-                )
-            )
-
-            # Keep the last portion of the previous
-            # window as context for the next window.
-            overlap_chunk = []
-            overlap_length = 0
-
-            for previous_line in reversed(
-                current_chunk
-            ):
-
-                previous_length = (
-                    len(previous_line) + 1
-                )
-
-                if (
-                    overlap_length
-                    + previous_length
-                    > overlap_chars
-                ):
-                    break
-
-                overlap_chunk.insert(
-                    0,
-                    previous_line
-                )
-
-                overlap_length += (
-                    previous_length
-                )
-
-            current_chunk = overlap_chunk
-
-            current_length = overlap_length
-
-        current_chunk.append(
-            line
-        )
-
-        current_length += line_length
-
-    if current_chunk:
-
-        chunks.append(
-            "\n".join(
-                current_chunk
-            )
-        )
-
-    return chunks
-
-
-def merge_segments(
-    segments: list[dict]
-) -> list[dict]:
-
-    if not segments:
-        return []
-
-    segments = sorted(
-        segments,
-        key=lambda segment: segment["start"]
-    )
-
-    merged = [
-        segments[0]
-    ]
-
-    for current in segments[1:]:
-
-        previous = merged[-1]
-
-        # Overlapping windows can cause the same sponsor
-        # segment to be detected more than once.
-        #
-        # Also merge segments that are extremely close
-        # together because the model may choose slightly
-        # different boundaries in different windows.
-        if (
-            current["start"]
-            <= previous["end"] + 3
-        ):
-
-            previous["end"] = max(
-                previous["end"],
-                current["end"]
-            )
-
-            if current.get("reason"):
-
-                if previous.get("reason"):
-
-                    if current["reason"] not in previous["reason"]:
-
-                        previous["reason"] += (
-                            f"; {current['reason']}"
-                        )
-
-                else:
-
-                    previous["reason"] = (
-                        current["reason"]
-                    )
-
-        else:
-
-            merged.append(
-                current
-            )
-
-    return merged
+    return merged_segments

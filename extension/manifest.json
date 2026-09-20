@@ -2,14 +2,20 @@
   "manifest_version": 3,
   "name": "SponsorSkip",
   "version": "1.0.0",
-  "description": "Automatically skips sponsored segments in YouTube videos.",
-  "permissions": [],
+  "description": "Automatically or manually skips sponsored segments in YouTube videos.",
+  "permissions": [
+    "storage"
+  ],
   "host_permissions": [
     "http://localhost:8001/*",
     "http://127.0.0.1:8001/*"
   ],
   "background": {
     "service_worker": "background.js"
+  },
+  "action": {
+    "default_title": "SponsorSkip",
+    "default_popup": "popup.html"
   },
   "content_scripts": [
     {

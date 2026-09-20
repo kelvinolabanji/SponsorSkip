@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+
+    <meta
+        name="viewport"
+        content="width=device-width, initial-scale=1.0"
+    >
+
+    <title>SponsorSkip</title>
+
+    <link
+        rel="stylesheet"
+        href="popup.css"
+    >
+</head>
+
+<body>
+
+    <main class="popup">
+
+        <header class="header">
+
+            <div class="brand">
+
+                <div class="logo">
+                    ⏭
+                </div>
+
+                <div>
+                    <h1>SponsorSkip</h1>
+
+                    <p>
+                        YouTube sponsor control
+                    </p>
+                </div>
+
+            </div>
+
+            <div
+                id="statusDot"
+                class="status-dot"
+            ></div>
+
+        </header>
+
+
+        <section class="mode-card">
+
+            <div class="mode-header">
+
+                <div>
+                    <span class="section-label">
+                        SKIPPING MODE
+                    </span>
+
+                    <h2 id="modeTitle">
+                        Auto Skip
+                    </h2>
+                </div>
+
+                <label class="switch">
+
+                    <input
+                        type="checkbox"
+                        id="autoSkipToggle"
+                    >
+
+                    <span class="slider"></span>
+
+                </label>
+
+            </div>
+
+
+            <p
+                id="modeDescription"
+                class="description"
+            >
+                SponsorSkip automatically skips
+                detected sponsored segments.
+            </p>
+
+        </section>
+
+
+        <section class="info-card">
+
+            <div class="info-icon">
+                ✓
+            </div>
+
+            <div>
+
+                <strong>
+                    SponsorSkip is ready
+                </strong>
+
+                <p>
+                    Open a YouTube video to detect
+                    sponsored segments.
+                </p>
+
+            </div>
+
+        </section>
+
+
+        <footer>
+
+            <span>
+                SponsorSkip
+            </span>
+
+            <span>
+                v1.0.0
+            </span>
+
+        </footer>
+
+    </main>
+
+
+    <script src="popup.js"></script>
+
+</body>
+
+</html>
