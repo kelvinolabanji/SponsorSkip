@@ -1,5 +1,7 @@
 # SponsorSkip
 
+![SponsorSkip demo](docs/demo.gif)
+
 A Chrome extension that detects and skips sponsored segments in YouTube videos.
 
 Unlike crowdsourced tools such as SponsorBlock, SponsorSkip needs no community timestamps. It reads the video's transcript and asks an LLM to find the sponsor reads, so it works on videos nobody has annotated yet.
@@ -12,6 +14,12 @@ Unlike crowdsourced tools such as SponsorBlock, SponsorSkip needs no community t
 - **Non-blocking detection:** the video plays normally while detection runs. Segments are skipped as soon as they arrive.
 - **Caching:** results are stored per video in Postgres, so each video is analysed once.
 - **SPA-aware:** handles YouTube's single-page navigation and discards stale responses when you switch videos.
+
+## Screenshots
+
+| Extension Menu | Manual skip |
+| --- | --- |
+| ![Extension popup](docs/SponsorSkip%20extension.png) | ![Manual skip button](docs/manual%20mode.png) |
 
 ## How it works
 
