@@ -1,5 +1,6 @@
 """Business logic for ``/segments``: cache lookup, transcript and detection."""
 
+import asyncio
 import logging
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -31,7 +32,8 @@ async def get_or_detect_segments(
         logger.info("Using cached sponsor segments for %s", video_id)
         return cached.segments, True
 
-    transcript = get_transcript(video_id)
+    # Blocking calls run in worker threads so the event loop stays free.
+    transcript = await asyncio.to_thread(get_transcript, video_id)
     transcript_text = format_for_prompt(transcript)
     logger.info(
         "Transcript retrieved for %s: %d entries, %d characters",
@@ -41,11 +43,14 @@ async def get_or_detect_segments(
     )
 
     try:
-        segments = detect_sponsor_segments(transcript_text)
+        segments = await asyncio.to_thread(
+            detect_sponsor_segments, transcript_text
+        )
     except Exception as error:
         logger.exception("Sponsor detection failed for %s", video_id)
         raise SegmentDetectionFailed(video_id) from error
 
-    session.add(VideoSegments(video_id=video_id, segments=segments))
+    # merge (not add): a concurrent request for the same video may have saved it.
+    await session.merge(VideoSegments(video_id=video_id, segments=segments))
     await session.commit()
     return segments, False

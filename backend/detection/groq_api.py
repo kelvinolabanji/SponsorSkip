@@ -33,8 +33,8 @@ def call_groq(transcript_window: str) -> list[dict]:
     """Detect sponsor segments in one transcript window.
 
     Retries on invalid JSON, empty or truncated replies, rate limits and other
-    API errors. After ``MAX_RETRIES`` failed attempts it gives up and returns
-    an empty list.
+    API errors. After ``MAX_RETRIES`` failed attempts it raises ``RuntimeError``
+    so a failure is never mistaken for "no sponsors found".
     """
     for attempt in range(1, MAX_RETRIES + 1):
         logger.info("Sending window to Groq (attempt %d/%d)", attempt, MAX_RETRIES)
@@ -60,8 +60,8 @@ def call_groq(transcript_window: str) -> list[dict]:
             logger.info("Retrying in %.1fs", delay)
             time.sleep(delay)
 
-    logger.error("Groq failed after %d attempts; returning no segments", MAX_RETRIES)
-    return []
+    logger.error("Groq failed after %d attempts", MAX_RETRIES)
+    raise RuntimeError(f"Groq failed after {MAX_RETRIES} attempts")
 
 
 def _request_completion(transcript_window: str) -> str:
